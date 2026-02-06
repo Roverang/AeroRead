@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Music2, Play, Pause, SkipForward, SkipBack, Link2, Volume2, VolumeX } from 'lucide-react';
 
 interface SpotifyPlayer {
@@ -17,9 +17,8 @@ interface SonicModuleProps {
   isStealthActive: boolean;
 }
 
-// Spotify Client ID - Replace with your own from Spotify Developer Dashboard
-const SPOTIFY_CLIENT_ID = 'YOUR_CLIENT_ID_HERE';
-const REDIRECT_URI = window.location.origin;
+const SPOTIFY_CLIENT_ID = '40a608d1ec784be9bd338f532815903c';
+const REDIRECT_URI = 'http://127.0.0.1:8080/'; 
 const SCOPES = 'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state';
 
 export function SonicModule({ isStealthActive }: SonicModuleProps) {
@@ -34,17 +33,36 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const previousVolumeRef = useRef(0.5);
 
-  // Check for existing token on mount
+  // --- OAUTH: HANDLES REDIRECT & TOKEN EXCHANGE ---
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash) {
-      const params = new URLSearchParams(hash.substring(1));
-      const token = params.get('access_token');
-      if (token) {
-        sessionStorage.setItem('spotify_token', token);
-        window.location.hash = '';
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+
+    const fetchToken = async (authCode: string) => {
+      const codeVerifier = sessionStorage.getItem('spotify_code_verifier');
+      
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: SPOTIFY_CLIENT_ID,
+          grant_type: 'authorization_code',
+          code: authCode,
+          redirect_uri: REDIRECT_URI,
+          code_verifier: codeVerifier || '',
+        }),
+      });
+
+      const data = await response.json();
+      if (data.access_token) {
+        sessionStorage.setItem('spotify_token', data.access_token);
+        window.history.replaceState({}, document.title, "/");
         setIsConnected(true);
       }
+    };
+
+    if (code) {
+      fetchToken(code);
     } else {
       const existingToken = sessionStorage.getItem('spotify_token');
       if (existingToken) {
@@ -53,14 +71,13 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
     }
   }, []);
 
-  // Initialize Spotify SDK
+  // --- SDK INITIALIZATION (FULL ORIGINAL LOGIC) ---
   useEffect(() => {
     if (!isConnected) return;
 
     const token = sessionStorage.getItem('spotify_token');
     if (!token) return;
 
-    // Load Spotify SDK
     const script = document.createElement('script');
     script.src = 'https://sdk.scdn.co/spotify-player.js';
     script.async = true;
@@ -75,6 +92,7 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
         volume: 0.5,
       });
 
+      // Restoration of all listeners
       player.addListener('ready', ({ device_id }: { device_id: string }) => {
         console.log('Sonic Module ready with Device ID:', device_id);
         setDeviceId(device_id);
@@ -88,7 +106,6 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
 
       player.addListener('player_state_changed', (state: any) => {
         if (!state) return;
-        
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
       });
@@ -114,27 +131,54 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
     };
   }, [isConnected]);
 
-  const handleConnect = () => {
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=token&show_dialog=true`;
-    window.location.href = authUrl;
+  // --- CONNECT HANDLER (PKCE UPGRADE) ---
+  const handleConnect = async () => {
+    const generateRandomString = (length: number) => {
+      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const values = crypto.getRandomValues(new Uint8Array(length));
+      return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+    };
+
+    const codeVerifier = generateRandomString(64);
+    
+    const sha256 = async (plain: string) => {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plain);
+      return window.crypto.subtle.digest('SHA-256', data);
+    };
+
+    const base64encode = (input: ArrayBuffer) => {
+      return btoa(String.fromCharCode(...new Uint8Array(input)))
+        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    };
+
+    const hashed = await sha256(codeVerifier);
+    const codeChallenge = base64encode(hashed);
+
+    window.sessionStorage.setItem('spotify_code_verifier', codeVerifier);
+
+    const params = new URLSearchParams({
+      client_id: SPOTIFY_CLIENT_ID,
+      response_type: 'code',
+      redirect_uri: REDIRECT_URI,
+      scope: SCOPES,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+    });
+
+    window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
   };
 
   const handlePlayPause = async () => {
-    if (playerRef.current) {
-      await playerRef.current.togglePlay();
-    }
+    if (playerRef.current) await playerRef.current.togglePlay();
   };
 
   const handleNext = async () => {
-    if (playerRef.current) {
-      await playerRef.current.nextTrack();
-    }
+    if (playerRef.current) await playerRef.current.nextTrack();
   };
 
   const handlePrevious = async () => {
-    if (playerRef.current) {
-      await playerRef.current.previousTrack();
-    }
+    if (playerRef.current) await playerRef.current.previousTrack();
   };
 
   const handleVolumeToggle = async () => {
@@ -151,22 +195,32 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
     }
   };
 
-  // Stealth mode classes
   const stealthClasses = `transition-opacity duration-500 ${
     isStealthActive ? 'opacity-0 pointer-events-none' : 'opacity-100'
   }`;
 
+  const transferPlayback = async (token: string, deviceId: string) => {
+  await fetch('https://api.spotify.com/v1/artists/4Z8W4fKeB5YxbusRsdQVPb', {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      device_ids: [deviceId],
+      play: true, // This starts the music immediately
+    }),
+  });
+};
   return (
     <div className={`fixed bottom-20 right-4 z-50 ${stealthClasses}`}>
       <div className="w-72 bg-[#0f172a]/90 backdrop-blur-md border border-primary rounded-none p-3 shadow-lg">
-        {/* Header */}
         <div className="flex items-center gap-2 mb-3">
           <Music2 className="w-4 h-4 text-primary" />
           <span className="ui-label text-primary text-xs">[ SONIC MODULE ]</span>
         </div>
 
         {!isConnected ? (
-          // Connect Button
           <button
             onClick={handleConnect}
             className="w-full flex items-center justify-center gap-2 py-2 literary-panel hover:literary-panel-active transition-all duration-200 rounded-none"
@@ -175,16 +229,13 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
             <span className="ui-label text-primary text-xs">[ LINK STREAM ]</span>
           </button>
         ) : !isReady ? (
-          // Connecting state
           <div className="text-center py-3">
             <span className="ui-label text-dust text-xs animate-pulse-soft">
               [ INITIALIZING AUDIO STREAM... ]
             </span>
           </div>
         ) : (
-          // Player Controls
           <div className="space-y-3">
-            {/* Track Info */}
             <div className="overflow-hidden">
               {currentTrack ? (
                 <div className="space-y-1">
@@ -204,45 +255,21 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
               )}
             </div>
 
-            {/* Controls */}
             <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={handlePrevious}
-                className="p-2 hover:bg-primary/10 transition-colors rounded-none"
-                disabled={!currentTrack}
-              >
+              <button onClick={handlePrevious} className="p-2 hover:bg-primary/10 transition-colors rounded-none" disabled={!currentTrack}>
                 <SkipBack className="w-4 h-4 text-primary" />
               </button>
               
-              <button
-                onClick={handlePlayPause}
-                className="p-3 literary-panel hover:literary-panel-active transition-all rounded-none"
-                disabled={!currentTrack}
-              >
-                {isPaused ? (
-                  <Play className="w-5 h-5 text-primary" />
-                ) : (
-                  <Pause className="w-5 h-5 text-primary" />
-                )}
+              <button onClick={handlePlayPause} className="p-3 literary-panel hover:literary-panel-active transition-all rounded-none" disabled={!currentTrack}>
+                {isPaused ? <Play className="w-5 h-5 text-primary" /> : <Pause className="w-5 h-5 text-primary" />}
               </button>
               
-              <button
-                onClick={handleNext}
-                className="p-2 hover:bg-primary/10 transition-colors rounded-none"
-                disabled={!currentTrack}
-              >
+              <button onClick={handleNext} className="p-2 hover:bg-primary/10 transition-colors rounded-none" disabled={!currentTrack}>
                 <SkipForward className="w-4 h-4 text-primary" />
               </button>
 
-              <button
-                onClick={handleVolumeToggle}
-                className="p-2 hover:bg-primary/10 transition-colors rounded-none ml-2"
-              >
-                {isMuted || volume === 0 ? (
-                  <VolumeX className="w-4 h-4 text-dust" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-primary" />
-                )}
+              <button onClick={handleVolumeToggle} className="p-2 hover:bg-primary/10 transition-colors rounded-none ml-2">
+                {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 text-dust" /> : <Volume2 className="w-4 h-4 text-primary" />}
               </button>
             </div>
           </div>

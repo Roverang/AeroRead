@@ -8,12 +8,13 @@ export interface ProcessedWord {
 }
 
 /**
- * Calculate the Optimal Recognition Point (ORP) for a word.
- * This is the letter the eye should focus on for fastest recognition.
+ * Calculate the Optimal Recognition Point (ORP).
+ * Based on eye-tracking research: the brain processes words fastest when 
+ * focusing slightly to the left of the center.
  */
 function calculatePivotIndex(word: string): number {
-  const cleanWord = word.replace(/[^a-zA-Z0-9]/g, '');
-  const length = cleanWord.length;
+  // We use the full length including punctuation for the visual center
+  const length = word.length;
   
   if (length <= 1) return 0;
   if (length <= 4) return 1;
@@ -23,51 +24,75 @@ function calculatePivotIndex(word: string): number {
 }
 
 /**
- * Calculate the delay modifier based on word characteristics.
+ * Calculate the delay modifier (The "Cognitive Load").
+ * This ensures the engine 'breathes'—slowing down for complex 
+ * concepts and speeding up for filler words.
  */
 function calculateDelayModifier(word: string): number {
   let modifier = 1.0;
   const cleanWord = word.replace(/[^a-zA-Z0-9]/g, '');
   
-  // Punctuation modifiers
-  if (word.endsWith(',') || word.endsWith(';') || word.endsWith(':')) {
-    modifier *= 1.5;
-  } else if (word.endsWith('.') || word.endsWith('!') || word.endsWith('?')) {
+  // 1. Punctuation Modifiers (The most critical for 'flow')
+  if (word.endsWith('.') || word.endsWith('!') || word.endsWith('?')) {
+    // Sentence ends require a significant pause (2.2x base)
     modifier *= 2.2;
-  }
-  
-  // Length modifiers
-  if (cleanWord.length < 4) {
-    modifier *= 0.8;
-  } else if (cleanWord.length > 10) {
-    modifier *= 1.3;
-  }
-  
-  // Number modifier
-  if (/\d/.test(word)) {
+  } else if (word.endsWith(',') || word.endsWith(';') || word.endsWith(':') || word.endsWith('—')) {
+    // Clauses require a moderate pause (1.5x base)
     modifier *= 1.5;
+  } else if (word.endsWith('"') || word.endsWith("'")) {
+    // Dialogue tags
+    modifier *= 1.2;
+  }
+  
+  // 2. Length Modifiers (The "Complexity" load)
+  if (cleanWord.length <= 2) {
+    // Short filler words (a, in, of) are processed instantly
+    modifier *= 0.75;
+  } else if (cleanWord.length > 10) {
+    // Long words require more 'shredding' time
+    modifier *= 1.35;
+  } else if (cleanWord.length > 15) {
+    // Technical/Complex terms
+    modifier *= 1.6;
+  }
+  
+  // 3. Numeric Modifiers
+  if (/\d/.test(word)) {
+    // Digits require literal reading, not just pattern recognition
+    modifier *= 1.5;
+  }
+
+  // 4. Special Case: All Caps (The "Emphasis" load)
+  if (cleanWord.length > 1 && cleanWord === cleanWord.toUpperCase()) {
+    modifier *= 1.2;
   }
   
   return modifier;
 }
 
 /**
- * Process raw text into an array of ProcessedWord objects.
+ * Process raw text into high-precision word objects.
  */
 export function processText(rawText: string): ProcessedWord[] {
-  // Split text by whitespace, filter empty strings
+  if (!rawText) return [];
+
+  // Split by whitespace and filter out ghost strings
   const words = rawText
+    .trim()
     .split(/\s+/)
     .filter(word => word.length > 0);
   
   return words.map(word => {
     const pivotIndex = calculatePivotIndex(word);
     
+    // Safety check for empty or broken strings
+    const pivotChar = word[pivotIndex] || '';
+    
     return {
       word,
       pivotIndex,
       prefix: word.slice(0, pivotIndex),
-      pivotChar: word[pivotIndex] || '',
+      pivotChar: pivotChar,
       suffix: word.slice(pivotIndex + 1),
       delayModifier: calculateDelayModifier(word),
     };
@@ -75,15 +100,25 @@ export function processText(rawText: string): ProcessedWord[] {
 }
 
 /**
- * Calculate the base delay for a given WPM.
+ * Calculate base delay (ms) for a target WPM.
  */
 export function calculateBaseDelay(wpm: number): number {
+  if (wpm <= 0) return 300; // Safety fallback
   return 60000 / wpm;
 }
 
 /**
- * Get the actual delay for a word based on WPM and its modifier.
+ * Computes final duration for a specific word.
+ * Formula: Base (WPM) * Modifier (Complexity)
  */
 export function getWordDelay(baseDelay: number, delayModifier: number): number {
   return baseDelay * delayModifier;
+}
+
+/**
+ * Utility: Join processed words back into text 
+ * (Used for History or context-aware features)
+ */
+export function reconstructText(words: ProcessedWord[]): string {
+  return words.map(w => w.word).join(' ');
 }

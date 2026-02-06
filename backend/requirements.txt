@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+motor
+pydantic
+python-multipart
+ebooklib
+beautifulsoup4
+pymupdf
+python-dotenv

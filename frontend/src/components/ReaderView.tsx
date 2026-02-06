@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useMemo } from 'react';
 import { X, Eye } from 'lucide-react';
-import { ProcessedWord } from '@/lib/textProcessor';
+import { ProcessedWord, processText } from '@/lib/textProcessor';
 import { SplinterDisplay } from './SplinterDisplay';
 import { StatusBar } from './StatusBar';
 import { ControlPanel } from './ControlPanel';
@@ -13,231 +13,194 @@ import { useWarmupMode } from '@/hooks/useWarmupMode';
 import { useReadingHistory } from '@/hooks/useReadingHistory';
 import { useSystemMessages } from '@/hooks/useSystemMessages';
 import { useStealthMode } from '@/hooks/useStealthMode';
+import { getChapter, updateProgress } from '@/services/archiveService';
 
 interface ReaderViewProps {
-  words: ProcessedWord[];
+  storyId: string;
+  initialWords: ProcessedWord[];
   wpm: number;
   onWpmChange: (wpm: number) => void;
-  onExit: (currentIndex?: number) => void;
+  onExit: (currentIndex?: number, chapterIndex?: number) => void;
   rawText: string;
   initialIndex?: number;
+  initialChapterIndex?: number;
   onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
-export function ReaderView({ words, wpm, onWpmChange, onExit, rawText, initialIndex = 0, onPlayStateChange }: ReaderViewProps) {
+export function ReaderView({ 
+  storyId,
+  initialWords, 
+  wpm, 
+  onWpmChange, 
+  onExit, 
+  rawText, 
+  initialIndex = 0, 
+  initialChapterIndex = 0,
+  onPlayStateChange 
+}: ReaderViewProps) {
+  const [currentWords, setCurrentWords] = useState<ProcessedWord[]>(initialWords);
+  const [chapterIndex, setChapterIndex] = useState(initialChapterIndex);
   const [effectiveWpm, setEffectiveWpm] = useState(wpm);
   const [showHistory, setShowHistory] = useState(false);
   const [chunkSize, setChunkSize] = useState<1 | 2 | 3>(1);
-  
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // --- CHAPTER STREAMING ---
+  const loadNextChapter = useCallback(async () => {
+    try {
+      setIsSyncing(true);
+      const nextIdx = chapterIndex + 1;
+      const data = await getChapter(storyId, nextIdx);
+      if (data && data.content) {
+        const processed = processText(data.content.join(' '));
+        setCurrentWords(processed);
+        setChapterIndex(nextIdx);
+      } else {
+        onExit(currentIndex, chapterIndex);
+      }
+    } catch (error) {
+      onExit(currentIndex, chapterIndex);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [storyId, chapterIndex, onExit]);
+
+  // --- ENGINE ---
   const {
     currentIndex,
     isPlaying,
     progress,
     currentWord,
     currentChunk,
-    toggle,
+    toggle, // This is the core engine trigger
     rewind,
     reset,
     setIndex,
-  } = useAeroEngine({ words, wpm: effectiveWpm, chunkSize });
+  } = useAeroEngine({ 
+    words: currentWords, 
+    wpm: effectiveWpm, 
+    chunkSize,
+    initialIndex,
+    onChapterComplete: loadNextChapter 
+  });
 
-  // Set initial index on mount
-  useEffect(() => {
-    if (initialIndex > 0) {
-      setIndex(initialIndex);
+  // CRITICAL FIX: Explicit Toggle Handler
+  const handleToggle = useCallback(() => {
+    if (isSyncing) return; // Don't play while downloading chapters
+    if (currentWords.length > 0) {
+      toggle();
+    } else {
+      console.warn("[ SYSTEM ]: No narrative data to play.");
     }
-  }, [initialIndex, setIndex]);
+  }, [currentWords, toggle, isSyncing]);
 
-  // Notify parent of play state changes
+  // --- SYNC PROGRESS ---
+  useEffect(() => {
+    if (!isPlaying && currentIndex > 0) {
+      updateProgress(storyId, currentIndex, chapterIndex);
+    }
+  }, [isPlaying, currentIndex, chapterIndex, storyId]);
+
   useEffect(() => {
     onPlayStateChange?.(isPlaying);
   }, [isPlaying, onPlayStateChange]);
 
-  const textHash = hashText(rawText);
-  
-  const {
-    savedIndex,
-    hasSaved,
-    saveBookmark,
-    loadBookmark,
-  } = useBookmark({ textHash, currentIndex });
-
-  const {
-    isWarmupActive,
-    toggleWarmup,
-  } = useWarmupMode({ 
-    baseWpm: wpm, 
-    isPlaying, 
-    onWpmChange: setEffectiveWpm 
-  });
-
-  const {
-    sessions,
-    startSession,
-    updateProgress,
-    endSession,
-    clearHistory,
-    getStats,
-  } = useReadingHistory();
-
-  // Constellation System Messages
-  const {
-    currentMessage,
-    dismissMessage,
-  } = useSystemMessages({
-    wpm: effectiveWpm,
-    progress,
-    isPlaying,
-  });
-
-  // Stealth Mode
+  // --- HOOKS ---
+  const textHash = useMemo(() => hashText(rawText), [rawText]);
+  const { savedIndex, hasSaved, saveBookmark, loadBookmark } = useBookmark({ textHash, currentIndex });
+  const { isWarmupActive, toggleWarmup } = useWarmupMode({ baseWpm: wpm, isPlaying, onWpmChange: setEffectiveWpm });
+  const { sessions, startSession, updateProgress: updateHistory, endSession, clearHistory, getStats } = useReadingHistory();
+  const { currentMessage, dismissMessage } = useSystemMessages({ wpm: effectiveWpm, progress, isPlaying });
   const { isStealthActive } = useStealthMode({ isPlaying });
 
-  // Start session on mount
+  // --- LIFECYCLE ---
   useEffect(() => {
-    startSession(rawText, words.length, wpm);
-    return () => {
-      endSession();
-    };
-  }, [rawText, words.length, wpm, startSession, endSession]);
+    startSession(rawText, currentWords.length, wpm);
+    return () => endSession();
+  }, [rawText, currentWords.length, wpm, startSession, endSession]);
 
-  // Update progress in history
   useEffect(() => {
-    updateProgress(progress, effectiveWpm);
-  }, [progress, effectiveWpm, updateProgress]);
+    updateHistory(progress, effectiveWpm);
+  }, [progress, effectiveWpm, updateHistory]);
 
-  // Calculate time to clear
   const estimatedTimeLeft = useMemo(() => {
-    const wordsLeft = words.length - currentIndex;
-    const minutesLeft = wordsLeft / effectiveWpm;
-    
-    if (minutesLeft < 1) {
-      const seconds = Math.ceil(minutesLeft * 60);
-      return `${seconds}s`;
-    }
-    
-    const mins = Math.floor(minutesLeft);
-    const secs = Math.ceil((minutesLeft - mins) * 60);
-    return `${mins}m ${secs}s`;
-  }, [words.length, currentIndex, effectiveWpm]);
+    const wordsLeft = currentWords.length - currentIndex;
+    const minutesLeft = wordsLeft / (effectiveWpm || 1);
+    if (minutesLeft < 1) return `${Math.ceil(minutesLeft * 60)}s`;
+    return `${Math.floor(minutesLeft)}m ${Math.ceil((minutesLeft % 1) * 60)}s`;
+  }, [currentWords.length, currentIndex, effectiveWpm]);
 
-  // Sync effective WPM with parent when not in warmup
-  useEffect(() => {
-    if (!isWarmupActive) {
-      setEffectiveWpm(wpm);
-    }
-  }, [wpm, isWarmupActive]);
-
-  // Handle loading bookmark
-  const handleLoadBookmark = useCallback(() => {
-    const idx = loadBookmark();
-    if (idx !== null) {
-      setIndex(idx);
-    }
-    return idx;
-  }, [loadBookmark, setIndex]);
-
-  // Handle exit with current index
   const handleExit = useCallback(() => {
-    onExit(currentIndex);
-  }, [onExit, currentIndex]);
+    updateProgress(storyId, currentIndex, chapterIndex);
+    onExit(currentIndex, chapterIndex);
+  }, [onExit, currentIndex, chapterIndex, storyId]);
 
-  // Keyboard controls
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.code === 'Space') {
-      e.preventDefault();
-      toggle();
-    } else if (e.code === 'ArrowLeft') {
-      e.preventDefault();
-      rewind(10);
-    } else if (e.code === 'Escape') {
-      e.preventDefault();
-      handleExit();
-    }
-  }, [toggle, rewind, handleExit]);
-
+  // Keyboard
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handleToggle(); // Use the new fixed handler
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        rewind(10);
+      } else if (e.code === 'Escape') {
+        e.preventDefault();
+        handleExit();
+      }
+    };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, [handleToggle, rewind, handleExit]);
 
-  const stats = getStats();
-
-  // Stealth mode classes
-  const stealthClasses = `transition-opacity duration-500 ${
-    isStealthActive ? 'opacity-0 pointer-events-none' : 'opacity-100'
-  }`;
+  const stealthClasses = `transition-opacity duration-300 ${isStealthActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`;
 
   return (
-    <div className="fixed inset-0 bg-background z-50 flex flex-col">
-      {/* Header Bar - Fades with stealth */}
-      <header className={`relative z-10 flex items-center justify-between p-4 border-b border-primary/30 ${stealthClasses}`}>
+    <div className="fixed inset-0 bg-background z-50 flex flex-col font-mono overflow-hidden">
+      
+      {/* 1. HEADER (Z-40) */}
+      <header className={`h-16 flex-shrink-0 flex items-center justify-between px-6 border-b border-primary/20 bg-background z-40 ${stealthClasses}`}>
         <div className="flex items-center gap-3">
-          <Eye className="w-5 h-5 text-primary animate-pulse-soft" />
-          <span className="ui-label text-primary">
-            FOURTH WALL ACTIVE
+          <Eye className="w-5 h-5 text-primary" />
+          <span className="ui-label text-[10px] text-primary tracking-widest uppercase">
+            [ CH: {chapterIndex + 1} ] {isSyncing ? "SYNCING..." : "READY"}
           </span>
-          {isWarmupActive && (
-            <span className="px-2 py-0.5 bg-olive/20 border border-olive/50 rounded-none ui-label text-olive text-[10px] animate-warmup-pulse">
-              WARMUP MODE
-            </span>
-          )}
-          {chunkSize > 1 && (
-            <span className="px-2 py-0.5 bg-primary/10 border border-primary/30 rounded-none ui-label text-primary text-[10px]">
-              {chunkSize}W CHUNK
-            </span>
-          )}
         </div>
-        
         <div className="flex items-center gap-4">
-          <span className="ui-label text-dust">
-            [ SYNC RATE ]: <span className="text-foreground font-bold">{effectiveWpm}</span> WPM
+          <span className="ui-label text-[10px] text-dust uppercase">
+            SPEED: <span className="text-foreground">{effectiveWpm}</span> WPM
           </span>
-          
-          <button
-            onClick={handleExit}
-            className="literary-panel p-2 rounded-none hover:literary-panel-active transition-all duration-200"
-          >
-            <X className="w-4 h-4 text-dust hover:text-foreground" />
+          <button onClick={handleExit} className="p-1 hover:text-primary transition-colors">
+            <X className="w-5 h-5" />
           </button>
         </div>
       </header>
       
-      {/* Main Reading Area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-8">
-        {/* The "Fourth Wall" - Main display container */}
-        <div className="w-full max-w-4xl">
-          {/* Word Display Box - Border fades with stealth, text stays visible */}
+      {/* 2. MAIN CANVAS (Flex-1) */}
+      <main className="flex-1 overflow-y-auto px-6 pt-12 relative bg-background">
+        <div className="w-full max-w-4xl mx-auto flex flex-col items-center pb-40">
+          
           <div className={`
-            bg-reader rounded-none p-8 md:p-12 min-h-[200px] 
-            flex items-center justify-center
-            transition-all duration-500
-            ${isStealthActive 
-              ? 'border-transparent' 
-              : 'border border-primary/30 literary-panel-active'
-            }
-            ${isWarmupActive && !isStealthActive ? 'animate-warmup-pulse' : ''}
+            w-full bg-reader border border-primary/10 p-10 md:p-16 min-h-[220px] 
+            flex items-center justify-center transition-all duration-300
+            ${isSyncing ? 'opacity-20' : 'opacity-100'}
           `}>
             <SplinterDisplay word={currentWord} chunk={currentChunk} />
           </div>
           
-          {/* Status Bar - Fades with stealth */}
-          <div className={`mt-6 ${stealthClasses}`}>
+          <div className={`w-full max-w-2xl mt-10 space-y-10 ${stealthClasses}`}>
             <StatusBar 
               progress={progress}
               currentIndex={currentIndex}
-              totalWords={words.length}
+              totalWords={currentWords.length}
               estimatedTimeLeft={estimatedTimeLeft}
             />
-          </div>
-          
-          {/* Control Panel - Fades with stealth */}
-          <div className={`mt-6 ${stealthClasses}`}>
+            
             <ControlPanel
               wpm={wpm}
               onWpmChange={onWpmChange}
               isPlaying={isPlaying}
-              onToggle={toggle}
+              onToggle={handleToggle} // Uses the fixed explicit handler
               onRewind={() => rewind(10)}
               onReset={reset}
               chunkSize={chunkSize}
@@ -247,35 +210,28 @@ export function ReaderView({ words, wpm, onWpmChange, onExit, rawText, initialIn
         </div>
       </main>
       
-      {/* Inventory Bar - Fades with stealth */}
-      <div className={stealthClasses}>
-        <InventoryBar
-          onHistoryOpen={() => setShowHistory(true)}
-          onBookmarkSave={saveBookmark}
-          onBookmarkLoad={handleLoadBookmark}
-          onWarmupToggle={toggleWarmup}
-          isWarmupActive={isWarmupActive}
-          hasSavedBookmark={hasSaved}
-          savedBookmarkIndex={savedIndex}
-          currentIndex={currentIndex}
-          totalWords={words.length}
-        />
-      </div>
+      {/* 3. FOOTER (Z-50) */}
+      <footer className={`h-24 flex-shrink-0 bg-background border-t border-primary/20 z-50 flex items-center ${stealthClasses}`}>
+        <div className="w-full px-6">
+          <InventoryBar
+            onHistoryOpen={() => setShowHistory(true)}
+            onBookmarkSave={saveBookmark}
+            onBookmarkLoad={() => {
+              const idx = loadBookmark();
+              if (idx !== null) setIndex(idx);
+            }}
+            onWarmupToggle={toggleWarmup}
+            isWarmupActive={isWarmupActive}
+            hasSavedBookmark={hasSaved}
+            savedBookmarkIndex={savedIndex}
+            currentIndex={currentIndex}
+            totalWords={currentWords.length}
+          />
+        </div>
+      </footer>
 
-      {/* History Modal */}
-      <HistoryModal
-        isOpen={showHistory}
-        onClose={() => setShowHistory(false)}
-        sessions={sessions}
-        onClearHistory={clearHistory}
-        stats={stats}
-      />
-
-      {/* Constellation System Messages */}
-      <SystemMessage 
-        message={currentMessage} 
-        onDismiss={dismissMessage} 
-      />
+      <HistoryModal isOpen={showHistory} onClose={() => setShowHistory(false)} sessions={sessions} onClearHistory={clearHistory} stats={getStats()} />
+      <SystemMessage message={currentMessage} onDismiss={dismissMessage} />
     </div>
   );
 }
