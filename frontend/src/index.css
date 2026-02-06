@@ -1,0 +1,221 @@
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/rajdhani/500.css";
+@import "@fontsource/rajdhani/600.css";
+@import "@fontsource/rajdhani/700.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* The Protagonist System Palette */
+    --background: 0 0% 7%; /* #111111 Ink Black */
+    --foreground: 40 30% 94%; /* #F4F1EC Parchment White */
+
+    --card: 0 0% 7%; /* #111111 */
+    --card-foreground: 40 30% 94%;
+
+    --popover: 0 0% 7%;
+    --popover-foreground: 40 30% 94%;
+
+    --primary: 43 56% 60%; /* #D4B15F Soft Gold */
+    --primary-foreground: 0 0% 7%;
+
+    --secondary: 0 0% 12%; /* Slightly lighter than background */
+    --secondary-foreground: 40 30% 94%;
+
+    --muted: 0 0% 15%;
+    --muted-foreground: 200 5% 62%; /* #9DA3A6 Dust Gray */
+
+    --accent: 78 30% 33%; /* #5A6B3C Olive Green */
+    --accent-foreground: 40 30% 94%;
+
+    --destructive: 340 82% 52%; /* #FF2E63 Neon Red */
+    --destructive-foreground: 40 30% 94%;
+
+    --border: 43 56% 60%; /* Gold border */
+    --input: 0 0% 12%;
+    --ring: 43 56% 60%;
+
+    --radius: 0.125rem; /* Sharp corners */
+
+    /* Custom AeroRead tokens */
+    --gold: 43 56% 60%; /* #D4B15F */
+    --gold-muted: 43 40% 45%;
+    --pivot-red: 340 82% 52%; /* #FF2E63 */
+    --reader-bg: 0 0% 5%; /* Near-black for reader */
+    --olive: 78 30% 33%; /* #5A6B3C */
+    --dust: 200 5% 62%; /* #9DA3A6 */
+    --surface: 0 0% 10%;
+    --parchment: 40 30% 94%; /* #F4F1EC */
+  }
+
+  .dark {
+    --background: 0 0% 7%;
+    --foreground: 40 30% 94%;
+    --card: 0 0% 7%;
+    --card-foreground: 40 30% 94%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 40 30% 94%;
+    --primary: 43 56% 60%;
+    --primary-foreground: 0 0% 7%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 40 30% 94%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 200 5% 62%;
+    --accent: 78 30% 33%;
+    --accent-foreground: 40 30% 94%;
+    --destructive: 340 82% 52%;
+    --destructive-foreground: 40 30% 94%;
+    --border: 43 56% 60%;
+    --input: 0 0% 12%;
+    --ring: 43 56% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 500;
+  }
+
+  /* Reader-specific mono font */
+  .font-reader {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer utilities {
+  /* Literary panel - flat, no glow */
+  .literary-panel {
+    @apply bg-background border border-primary/30;
+  }
+
+  .literary-panel-active {
+    @apply bg-background border border-primary/60;
+  }
+
+  /* UI Text Style - Gold uppercase */
+  .ui-text {
+    @apply uppercase tracking-widest font-semibold text-primary;
+    font-family: 'Rajdhani', sans-serif;
+  }
+
+  .ui-label {
+    @apply uppercase tracking-[0.2em] text-xs font-semibold text-primary/70;
+    font-family: 'Rajdhani', sans-serif;
+  }
+
+  /* Pivot letter glow - kept for the red focal point */
+  .pivot-glow {
+    text-shadow: 0 0 8px hsl(var(--pivot-red) / 0.9),
+                 0 0 16px hsl(var(--pivot-red) / 0.6);
+  }
+
+  /* Gold text styling */
+  .gold-text {
+    @apply text-primary;
+  }
+
+  /* Status bar - Olive green */
+  .status-bar-fill {
+    @apply bg-accent;
+  }
+
+  /* Fourth Wall animation */
+  @keyframes shatter {
+    0% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(1.1);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(1.5);
+      opacity: 0;
+    }
+  }
+
+  .animate-shatter {
+    animation: shatter 0.6s ease-out forwards;
+  }
+
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.5s ease-out forwards;
+  }
+
+  @keyframes pulse-soft {
+    0%, 100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  .animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
+
+  /* Warmup mode indicator */
+  .animate-warmup-pulse {
+    animation: warmup-indicator 1s ease-in-out infinite;
+  }
+
+  @keyframes warmup-indicator {
+    0%, 100% {
+      border-color: hsl(var(--olive) / 0.5);
+    }
+    50% {
+      border-color: hsl(var(--olive) / 1);
+    }
+  }
+
+  /* File drop zone */
+  .drop-zone {
+    @apply border-2 border-dashed border-primary/30 transition-all duration-200;
+  }
+
+  .drop-zone:hover,
+  .drop-zone-active {
+    @apply border-primary/60 bg-primary/5;
+  }
+
+  /* Marquee animation for Sonic Module */
+  @keyframes marquee {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-100%);
+    }
+  }
+
+  .animate-marquee {
+    animation: marquee 8s linear infinite;
+  }
+
+  .animate-marquee:hover {
+    animation-play-state: paused;
+  }
+}
