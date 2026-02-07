@@ -1,3 +1,16 @@
+import sys
+import os
+
+# This tells Python to look in the folder this file is in for other files like database.py
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from fastapi import FastAPI, UploadFile, File
+# Now this import will actually work on Vercel
+from database import connect_to_mongo, close_mongo_connection 
+# ... the rest of your imports
+
+
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import connect_to_mongo, close_mongo_connection

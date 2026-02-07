@@ -2,8 +2,10 @@ fastapi
 uvicorn
 motor
 pydantic
+pydantic-settings
 python-multipart
 ebooklib
 beautifulsoup4
+lxml
 pymupdf
 python-dotenv
