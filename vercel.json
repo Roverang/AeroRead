@@ -17,11 +17,16 @@
       "destination": "backend/main.py"
     },
     {
-      "handle": "filesystem"
+      "source": "/assets/(.*)",
+      "destination": "/frontend/assets/$1"
+    },
+    {
+      "source": "/index.html",
+      "destination": "/frontend/index.html"
     },
     {
       "source": "/(.*)",
-      "destination": "frontend/index.html"
+      "destination": "/frontend/index.html"
     }
   ]
 }
