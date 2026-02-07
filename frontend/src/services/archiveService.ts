@@ -1,7 +1,23 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import axios from 'axios';
 
-const API_BASE = 'http://127.0.0.1:8000';
+// --- SYSTEM CONFIGURATION ---
+// Ensures that in production, it hits https://aeroread.vercel.app/api
+// In local dev, it hits http://127.0.0.1:8000
+const API_BASE = import.meta.env.PROD 
+  ? `${window.location.origin}/api` 
+  : 'http://127.0.0.1:8000';
+
+/**
+ * THE UPLOAD PROTOCOL
+ */
+export const uploadFile = async (file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  // No manual Content-Type header needed; axios/browser handles the boundary automatically
+  return await axios.post(`${API_BASE}/archive/upload`, formData);
+};
 
 export interface Narrative {
   id: string;
@@ -41,7 +57,6 @@ function getDB(): Promise<IDBPDatabase<ArchiveDB>> {
 
 /**
  * THE INGESTION CHAMBER
- * Uses the Backend Shredder for EPUB/PDF, and Local Storage for TXT.
  */
 export async function saveNarrative(
   title: string,
@@ -53,21 +68,18 @@ export async function saveNarrative(
   let finalId = crypto.randomUUID();
   let wordCount = 0;
 
-  // 1. OMNISCIENT SHREDDING (Cloud Pipe)
   if (file && (type === 'epub' || type === 'pdf')) {
     const formData = new FormData();
     formData.append('file', file);
     
-    // The FastAPI call splits the book into chapters and stores them in MongoDB
+    // Call Cloud Pipe
     const response = await axios.post(`${API_BASE}/archive/upload`, formData);
     finalId = response.data.id;
     wordCount = response.data.total_words;
   } else {
-    // Local calculation for raw text data
     wordCount = content.trim().split(/\s+/).filter(w => w.length > 0).length;
   }
 
-  // 2. ARCHIVE RECORD (Local Soul)
   const narrative: Narrative = {
     id: finalId,
     title,
@@ -83,37 +95,13 @@ export async function saveNarrative(
   return narrative;
 }
 
-/**
- * RETRIEVE ALL SCENARIOS
- */
-export async function getAllNarratives(): Promise<Narrative[]> {
-  const db = await getDB();
-  const narratives = await db.getAllFromIndex('narratives', 'by-date');
-  return narratives.reverse();
-}
+// --- CLOUD SYNCHRONIZATION ---
 
-/**
- * FETCH NARRATIVE METADATA
- */
-export async function getNarrative(id: string): Promise<Narrative | undefined> {
-  const db = await getDB();
-  return db.get('narratives', id);
-}
-
-/**
- * CHAPTER STREAMING
- * Pulls the specific word-array for the current chapter from MongoDB.
- */
 export async function getChapter(id: string, chapterIndex: number) {
   const response = await axios.get(`${API_BASE}/reader/${id}/chapter/${chapterIndex}`);
-  // Expected return: { title: string, content: string[], word_count: number }
   return response.data;
 }
 
-/**
- * OMNISCIENT PROGRESS SYNC
- * Saves to IndexedDB instantly for UI consistency, pings MongoDB in the background.
- */
 export async function updateProgress(
   id: string, 
   progressIndex: number, 
@@ -123,39 +111,40 @@ export async function updateProgress(
   const narrative = await db.get('narratives', id);
   
   if (narrative) {
-    // Update Local Soul
     narrative.progressIndex = progressIndex;
     narrative.chapterIndex = chapterIndex;
     await db.put('narratives', narrative);
 
-    // Background Sync (Cloud Protocol)
     axios.post(`${API_BASE}/reader/sync`, {
       story_id: id,
       chapter_index: chapterIndex,
       word_index: progressIndex
     }).catch(() => {
-      // Failed sync is silent to avoid interrupting the reader flow
       console.warn("[ SYSTEM NOTICE ]: Synchronization delayed. Progress held in Local Soul.");
     });
   }
 }
 
-/**
- * ARCHIVE PURGE
- */
+export async function getAllNarratives(): Promise<Narrative[]> {
+  const db = await getDB();
+  const narratives = await db.getAllFromIndex('narratives', 'by-date');
+  return narratives.reverse();
+}
+
+export async function getNarrative(id: string): Promise<Narrative | undefined> {
+  const db = await getDB();
+  return db.get('narratives', id);
+}
+
 export async function deleteNarrative(id: string): Promise<void> {
   const db = await getDB();
   await db.delete('narratives', id);
   
-  // Clean up the Cloud Archive
   axios.delete(`${API_BASE}/archive/delete/${id}`).catch(() => {
-    console.warn(`[ SYSTEM N OTICE ]: Cloud purge pending for ${id}`);
+    console.warn(`[ SYSTEM NOTICE ]: Cloud purge pending for ${id}`);
   });
 }
 
-/**
- * SYSTEM WIPE
- */
 export async function clearAllNarratives(): Promise<void> {
   const db = await getDB();
   await db.clear('narratives');
