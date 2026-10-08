@@ -1,5 +1,4 @@
 import fitz  # PyMuPDF
-import io
 
 def process_pdf(file_content: bytes):
     """
@@ -24,5 +23,8 @@ def process_pdf(file_content: bytes):
                 "content": words,
                 "word_count": word_count
             })
+
+    if not chapters:
+        raise ValueError("No readable text found in this PDF. Scanned PDFs need OCR first.")
 
     return chapters, total_words
