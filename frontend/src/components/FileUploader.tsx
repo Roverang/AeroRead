@@ -1,12 +1,8 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Upload, FileText, BookOpen, File as LucideFile, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import ePub from 'epubjs';
-import * as pdfjsLib from 'pdfjs-dist';
-import { saveNarrative } from '@/services/archiveService';
+import { parseBookFile } from '@/lib/bookParser';
+import { saveBook } from '@/services/archiveService';
 import { toast } from 'sonner';
-
-// Set up PDF.js worker for local fallback parsing
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
 
 interface FileUploaderProps {
   onUploadComplete: () => void;
@@ -16,9 +12,36 @@ export function FileUploader({ onUploadComplete }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState('');
-  const [uploadProgress, setUploadProgress] = useState(0);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Primary Ingestion Engine
+  const processFile = useCallback(async (file: File) => {
+    setIsProcessing(true);
+    try {
+      setProcessingStatus(`Parsing ${file.name.split('.').pop()?.toUpperCase() ?? ''} data stream...`);
+      const book = await parseBookFile(file);
+
+      setProcessingStatus(book.type === 'txt' ? 'Archiving to local soul...' : `Uploading ${book.chapters.length} chapters...`);
+      await saveBook(book);
+
+      toast.success(`[ ${book.title.toUpperCase()} ] has been archived.`, {
+        icon: <CheckCircle2 className="w-4 h-4 text-primary" />,
+      });
+      onUploadComplete();
+    } catch (error) {
+      console.error('System Failure during ingestion:', error);
+      toast.error(error instanceof Error ? error.message : 'UNKNOWN_INGESTION_ERROR', {
+        icon: <AlertTriangle className="w-4 h-4 text-destructive" />,
+      });
+    } finally {
+      setIsProcessing(false);
+      setProcessingStatus('');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [onUploadComplete]);
 
   // Drag and Drop Logic
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -42,127 +65,12 @@ export function FileUploader({ onUploadComplete }: FileUploaderProps) {
     if (files && files.length > 0) {
       processFile(files[0]);
     }
-  }, []);
+  }, [processFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) processFile(file);
-  }, []);
-
-  // Primary Ingestion Engine
-  const processFile = async (file: File) => {
-    setIsProcessing(true);
-    setUploadProgress(0);
-    const extension = file.name.split('.').pop()?.toLowerCase();
-    const title = file.name.replace(/\.[^/.]+$/, '');
-    
-    try {
-      let type: 'txt' | 'epub' | 'pdf' = 'txt';
-      
-      // Validation Check
-      if (!['txt', 'epub', 'pdf'].includes(extension || '')) {
-        throw new Error('UNSUPPORTED_DATA_FORMAT: System only accepts EPUB, PDF, or TXT.');
-      }
-
-      // 1. TEXT FILE LOGIC (Local First)
-      if (extension === 'txt') {
-        setProcessingStatus('Reading raw data stream...');
-        const content = await file.text();
-        
-        if (content.trim().length === 0) throw new Error('EMPTY_DATA: No narrative found.');
-        
-        setProcessingStatus('Archiving to local soul...');
-        await saveNarrative(title, content, 'txt');
-      } 
-      
-      // 2. EPUB/PDF LOGIC (FastAPI Hybrid)
-      else if (extension === 'epub' || extension === 'pdf') {
-        setProcessingStatus(`Initiating ${extension.toUpperCase()} Ingestion...`);
-        type = extension as 'epub' | 'pdf';
-
-        // We pass the raw file object. 
-        // Our archiveService detects the file and triggers the Multi-part Form upload to FastAPI.
-        await saveNarrative(title, "", type, file);
-      }
-
-      setProcessingStatus('Ingestion Complete.');
-      toast.success(`[ ${title.toUpperCase()} ] has been archived.`, {
-        icon: <CheckCircle2 className="w-4 h-4 text-primary" />,
-      });
-      
-      onUploadComplete();
-    } catch (error) {
-      console.error('System Failure during ingestion:', error);
-      toast.error(error instanceof Error ? error.message : 'UNKNOWN_INGESTION_ERROR', {
-        icon: <AlertTriangle className="w-4 h-4 text-destructive" />,
-      });
-    } finally {
-      setIsProcessing(false);
-      setProcessingStatus('');
-      setUploadProgress(0);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  /**
-   * LOCAL FALLBACK: parseEpub
-   * Keeping the soul of the frontend parser for offline redundancy.
-   */
-  const parseEpubFallback = async (file: File): Promise<string> => {
-    const arrayBuffer = await file.arrayBuffer();
-    const book = ePub(arrayBuffer);
-    await book.ready;
-    
-    const spine = book.spine as any;
-    let fullText = '';
-    
-    for (const section of spine.items) {
-      try {
-        await section.load(book.load.bind(book));
-        const doc = section.document;
-        
-        if (doc) {
-          const body = doc.querySelector('body');
-          if (body) {
-            const paragraphs = body.querySelectorAll('p, h1, h2, h3, h4, h5, h6');
-            paragraphs.forEach((p: Element) => {
-              const text = p.textContent?.trim();
-              if (text) fullText += text + '\n\n';
-            });
-            
-            if (!fullText.trim() && body.textContent) {
-              fullText += body.textContent.trim() + '\n\n';
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('System: Skipping corrupt data section.', e);
-      }
-    }
-    return fullText.trim();
-  };
-
-  /**
-   * LOCAL FALLBACK: parsePdf
-   * Preserves local extraction capabilities.
-   */
-  const parsePdfFallback = async (file: File): Promise<string> => {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    
-    let fullText = '';
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(' ');
-      fullText += pageText + '\n\n';
-    }
-    return fullText.trim();
-  };
+  }, [processFile]);
 
   return (
     <div className="mb-10 w-full">

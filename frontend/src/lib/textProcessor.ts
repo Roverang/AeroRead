@@ -48,12 +48,12 @@ function calculateDelayModifier(word: string): number {
   if (cleanWord.length <= 2) {
     // Short filler words (a, in, of) are processed instantly
     modifier *= 0.75;
-  } else if (cleanWord.length > 10) {
-    // Long words require more 'shredding' time
-    modifier *= 1.35;
   } else if (cleanWord.length > 15) {
     // Technical/Complex terms
     modifier *= 1.6;
+  } else if (cleanWord.length > 10) {
+    // Long words require more 'shredding' time
+    modifier *= 1.35;
   }
   
   // 3. Numeric Modifiers

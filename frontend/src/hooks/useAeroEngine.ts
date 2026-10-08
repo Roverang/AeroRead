@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ProcessedWord, calculateBaseDelay, getWordDelay } from '@/lib/textProcessor';
+import { ProcessedWord } from '@/lib/textProcessor';
 
 export interface ChunkData {
   words: ProcessedWord[];
@@ -12,7 +12,8 @@ interface UseAeroEngineProps {
   wpm: number;
   chunkSize?: 1 | 2 | 3;
   onComplete?: () => void;
-  onChapterComplete?: () => void; 
+  /** Called with the final word index when the last word has been shown. */
+  onChapterComplete?: (finalIndex: number) => void;
   initialIndex?: number;
 }
 
@@ -110,7 +111,7 @@ export function useAeroEngine({
         setIsPlaying(false);
         indexRef.current = words.length - 1;
         setCurrentIndex(words.length - 1);
-        if (onChapterComplete) onChapterComplete();
+        if (onChapterComplete) onChapterComplete(indexRef.current);
         else onComplete?.();
         return;
       }

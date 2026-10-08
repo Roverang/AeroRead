@@ -4,6 +4,7 @@ interface UseBookmarkProps {
   textHash: string;      // The content-based unique ID
   currentIndex: number;  // The active word position
   storyId?: string;      // Optional MongoDB ID for multi-story support
+  chapterIndex?: number; // Word indexes are per chapter, so bookmarks are too
 }
 
 interface BookmarkData {
@@ -19,14 +20,16 @@ interface BookmarkData {
  * It ensures that even if the system reboots, the reader can return 
  * to the exact moment they left.
  */
-export function useBookmark({ textHash, currentIndex, storyId }: UseBookmarkProps) {
+export function useBookmark({ textHash, currentIndex, storyId, chapterIndex = 0 }: UseBookmarkProps) {
   const [savedIndex, setSavedIndex] = useState<number | null>(null);
   const [hasSaved, setHasSaved] = useState(false);
 
   // We use a unique key per story so bookmarks don't overwrite each other
   const STORAGE_KEY = useMemo(() => {
-    return storyId ? `aeroread_bookmark_${storyId}` : `aeroread_bookmark_${textHash.substring(0, 8)}`;
-  }, [storyId, textHash]);
+    return storyId
+      ? `aeroread_bookmark_${storyId}_ch${chapterIndex}`
+      : `aeroread_bookmark_${textHash.substring(0, 8)}`;
+  }, [storyId, textHash, chapterIndex]);
 
   /**
    * INITIALIZATION: Sync with LocalStorage

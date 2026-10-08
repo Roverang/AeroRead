@@ -3,7 +3,7 @@ import { Hourglass, Bookmark, Eye, BookmarkCheck } from 'lucide-react';
 interface InventoryBarProps {
   onHistoryOpen: () => void;
   onBookmarkSave: () => void;
-  onBookmarkLoad: () => number | null;
+  onBookmarkLoad: () => void;
   onWarmupToggle: () => void;
   isWarmupActive: boolean;
   hasSavedBookmark: boolean;

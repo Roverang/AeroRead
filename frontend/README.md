@@ -31,7 +31,41 @@ cd frontend
 npm i
 npm run dev
 
-# Step 3: Setup the Backend.
+# Step 3: Setup the Backend (in a second terminal).
 cd ../backend
 pip install -r requirements.txt
-python main.py
+echo "MONGO_URL=<your MongoDB connection string>" > .env
+python main.py   # serves the API on http://127.0.0.1:8000/api
+```
+
+The dev frontend talks to the API at `http://127.0.0.1:8000/api`.
+
+**Configuration**
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `MONGO_URL` | backend | MongoDB connection string (required) |
+| `ALLOWED_ORIGINS` | backend | Comma-separated CORS origins; defaults to the production site plus `localhost:8080` / `127.0.0.1:8080` |
+
+For the Sonic Module (Spotify), register both `http://127.0.0.1:8080/` and your production URL as redirect URIs in the Spotify app dashboard.
+
+**Checks**
+
+```sh
+# Frontend
+cd frontend
+npm run lint
+npm test
+npm run build      # type-checks, then builds
+
+# Backend
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
+
+## How books are stored
+
+- EPUB and PDF files are split into chapters in the browser, then uploaded as gzipped JSON to `POST /api/archive/stories`. Each chapter is a separate MongoDB document, so long books never hit MongoDB's 16 MB document limit.
+- TXT files stay in the browser (IndexedDB) and never touch the server.
+- Reading progress is kept locally and synced to the server for cloud books.

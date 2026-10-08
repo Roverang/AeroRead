@@ -1,26 +1,36 @@
 import { useState, useRef, useCallback } from 'react';
-import { Upload, FileText, BookOpen, X } from 'lucide-react';
-import ePub from 'epubjs';
+import { Upload, FileText, BookOpen, File as LucideFile, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { parseBookFile, ParsedChapter } from '@/lib/bookParser';
 
 interface FileIngestionProps {
   onTextLoad: (text: string) => void;
 }
 
-interface EpubChapter {
-  id: string;
-  label: string;
-  href: string;
-}
-
 export function FileIngestion({ onTextLoad }: FileIngestionProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [chapters, setChapters] = useState<EpubChapter[]>([]);
-  const [selectedChapter, setSelectedChapter] = useState<string>('');
+  const [chapters, setChapters] = useState<ParsedChapter[]>([]);
+  const [selectedChapter, setSelectedChapter] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
-  const [epubBook, setEpubBook] = useState<any>(null);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const processFile = useCallback(async (file: File) => {
+    setIsLoading(true);
+    try {
+      const book = await parseBookFile(file);
+      setFileName(file.name);
+      setChapters(book.chapters.length > 1 ? book.chapters : []);
+      setSelectedChapter(0);
+      onTextLoad(book.chapters[0].text);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      toast.error(error instanceof Error ? error.message : 'Error processing file. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onTextLoad]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -37,103 +47,23 @@ export function FileIngestion({ onTextLoad }: FileIngestionProps) {
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) processFile(file);
-  }, []);
+  }, [processFile]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) processFile(file);
-  }, []);
+  }, [processFile]);
 
-  const processFile = async (file: File) => {
-    setIsLoading(true);
-    setFileName(file.name);
-    
-    const extension = file.name.split('.').pop()?.toLowerCase();
-    
-    try {
-      if (extension === 'txt') {
-        const text = await file.text();
-        onTextLoad(text);
-        setChapters([]);
-        setEpubBook(null);
-      } else if (extension === 'epub') {
-        const arrayBuffer = await file.arrayBuffer();
-        const book = ePub(arrayBuffer);
-        
-        await book.ready;
-        
-        // Get navigation/chapters
-        const navigation = await book.loaded.navigation;
-        const chapterList: EpubChapter[] = navigation.toc.map((item: any) => ({
-          id: item.id || item.href,
-          label: item.label,
-          href: item.href,
-        }));
-        
-        setChapters(chapterList);
-        setEpubBook(book);
-        
-        if (chapterList.length > 0) {
-          setSelectedChapter(chapterList[0].href);
-          await loadChapter(book, chapterList[0].href);
-        }
-      } else {
-        alert('Unsupported file format. Please use .txt or .epub files.');
-      }
-    } catch (error) {
-      console.error('Error processing file:', error);
-      alert('Error processing file. Please try again.');
-    }
-    
-    setIsLoading(false);
-  };
-
-  const loadChapter = async (book: any, href: string) => {
-    setIsLoading(true);
-    try {
-      const section = book.spine.get(href);
-      if (section) {
-        await section.load(book.load.bind(book));
-        const doc = section.document;
-        
-        // Extract text content, preserving some structure
-        const body = doc.querySelector('body');
-        let text = '';
-        
-        if (body) {
-          // Get text with paragraph breaks
-          const paragraphs = body.querySelectorAll('p, h1, h2, h3, h4, h5, h6');
-          paragraphs.forEach((p: Element) => {
-            text += p.textContent?.trim() + '\n\n';
-          });
-          
-          // Fallback to full text if no paragraphs found
-          if (!text.trim()) {
-            text = body.textContent || '';
-          }
-        }
-        
-        onTextLoad(text.trim());
-      }
-    } catch (error) {
-      console.error('Error loading chapter:', error);
-    }
-    setIsLoading(false);
-  };
-
-  const handleChapterChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const href = e.target.value;
-    setSelectedChapter(href);
-    if (epubBook && href) {
-      await loadChapter(epubBook, href);
-    }
+  const handleChapterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const index = Number(e.target.value);
+    setSelectedChapter(index);
+    if (chapters[index]) onTextLoad(chapters[index].text);
   };
 
   const clearFile = () => {
     setFileName(null);
     setChapters([]);
-    setEpubBook(null);
-    setSelectedChapter('');
+    setSelectedChapter(0);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -158,7 +88,7 @@ export function FileIngestion({ onTextLoad }: FileIngestionProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".txt,.epub"
+          accept=".txt,.epub,.pdf"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -169,7 +99,7 @@ export function FileIngestion({ onTextLoad }: FileIngestionProps) {
         </div>
         
         <p className="text-dust text-sm font-ui">
-          Drop .TXT or .EPUB file here, or click to browse
+          Drop .TXT, .EPUB or .PDF file here, or click to browse
         </p>
         
         <div className="flex items-center gap-4 text-xs text-dust/60">
@@ -178,6 +108,9 @@ export function FileIngestion({ onTextLoad }: FileIngestionProps) {
           </span>
           <span className="flex items-center gap-1">
             <BookOpen className="w-3 h-3" /> EPUB
+          </span>
+          <span className="flex items-center gap-1">
+            <LucideFile className="w-3 h-3" /> PDF
           </span>
         </div>
       </div>
@@ -206,9 +139,9 @@ export function FileIngestion({ onTextLoad }: FileIngestionProps) {
                 onChange={handleChapterChange}
                 className="w-full bg-surface border border-primary/30 rounded-none px-3 py-2 font-reader text-sm text-foreground focus:border-primary/60 focus:outline-none"
               >
-                {chapters.map((chapter) => (
-                  <option key={chapter.id} value={chapter.href}>
-                    {chapter.label}
+                {chapters.map((chapter, index) => (
+                  <option key={index} value={index}>
+                    {chapter.title}
                   </option>
                 ))}
               </select>

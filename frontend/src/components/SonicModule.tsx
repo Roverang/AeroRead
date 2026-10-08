@@ -1,7 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { Music2, Play, Pause, SkipForward, SkipBack, Link2, Volume2, VolumeX } from 'lucide-react';
 
+interface SpotifyTrack {
+  name: string;
+  artists: { name: string }[];
+  album: { images: { url: string }[] };
+}
+
+interface SpotifyPlaybackState {
+  paused: boolean;
+  track_window: { current_track: SpotifyTrack };
+}
+
 interface SpotifyPlayer {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- payload shape varies per event
   addListener: (event: string, callback: (data: any) => void) => void;
   removeListener: (event: string) => void;
   connect: () => Promise<boolean>;
@@ -10,7 +22,20 @@ interface SpotifyPlayer {
   nextTrack: () => Promise<void>;
   previousTrack: () => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
-  getCurrentState: () => Promise<any>;
+  getCurrentState: () => Promise<SpotifyPlaybackState | null>;
+}
+
+declare global {
+  interface Window {
+    onSpotifyWebPlaybackSDKReady?: () => void;
+    Spotify?: {
+      Player: new (options: {
+        name: string;
+        getOAuthToken: (cb: (token: string) => void) => void;
+        volume: number;
+      }) => SpotifyPlayer;
+    };
+  }
 }
 
 interface SonicModuleProps {
@@ -18,14 +43,15 @@ interface SonicModuleProps {
 }
 
 const SPOTIFY_CLIENT_ID = '40a608d1ec784be9bd338f532815903c';
-const REDIRECT_URI = 'http://127.0.0.1:8080/'; 
+// Must be registered in the Spotify app dashboard for every origin (local and production)
+const REDIRECT_URI = `${window.location.origin}/`;
 const SCOPES = 'streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state';
 
 export function SonicModule({ isStealthActive }: SonicModuleProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [isPaused, setIsPaused] = useState(true);
-  const [currentTrack, setCurrentTrack] = useState<any>(null);
+  const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null);
   const [volume, setVolume] = useState(0.5);
   const [isMuted, setIsMuted] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -83,8 +109,9 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
     script.async = true;
     document.body.appendChild(script);
 
-    (window as any).onSpotifyWebPlaybackSDKReady = () => {
-      const player = new (window as any).Spotify.Player({
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      if (!window.Spotify) return;
+      const player = new window.Spotify.Player({
         name: 'AeroRead System',
         getOAuthToken: (cb: (token: string) => void) => {
           cb(token);
@@ -104,7 +131,7 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
         setIsReady(false);
       });
 
-      player.addListener('player_state_changed', (state: any) => {
+      player.addListener('player_state_changed', (state: SpotifyPlaybackState | null) => {
         if (!state) return;
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
@@ -245,7 +272,7 @@ export function SonicModule({ isStealthActive }: SonicModuleProps) {
                     </p>
                   </div>
                   <p className="text-dust text-xs font-ui truncate">
-                    {currentTrack.artists.map((a: any) => a.name).join(', ')}
+                    {currentTrack.artists.map((a) => a.name).join(', ')}
                   </p>
                 </div>
               ) : (

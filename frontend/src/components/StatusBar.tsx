@@ -17,7 +17,7 @@ export function StatusBar({ progress, currentIndex, totalWords, estimatedTimeLef
       </div>
       
       {/* Stats Display */}
-      <div className="flex justify-between ui-label">
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 ui-label text-[10px] sm:text-xs">
         <span className="text-dust">
           WORD: <span className="text-foreground">{currentIndex + 1}</span>/{totalWords}
         </span>
