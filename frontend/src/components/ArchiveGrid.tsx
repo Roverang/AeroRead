@@ -1,19 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { BookOpen, Trash2, FileText, Book } from 'lucide-react';
-import { Narrative, getAllNarratives, deleteNarrative } from '@/services/archiveService';
+import { Narrative, getAllNarratives, deleteNarrative, getOverallProgress } from '@/services/archiveService';
 import { FileUploader } from './FileUploader';
 import { Progress } from '@/components/ui/progress';
 
 interface ArchiveGridProps {
   onNarrativeSelect: (narrative: Narrative) => void;
-  onNarrativeAdded: () => void;
+  /** True while a selected narrative is being loaded. */
+  isOpening?: boolean;
 }
 
-export function ArchiveGrid({ onNarrativeSelect, onNarrativeAdded }: ArchiveGridProps) {
+export function ArchiveGrid({ onNarrativeSelect, isOpening = false }: ArchiveGridProps) {
   const [narratives, setNarratives] = useState<Narrative[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadNarratives = async () => {
+  const loadNarratives = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getAllNarratives();
@@ -22,24 +23,20 @@ export function ArchiveGrid({ onNarrativeSelect, onNarrativeAdded }: ArchiveGrid
       console.error('System Error: Failed to load narratives from archive.', error);
     }
     setIsLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     loadNarratives();
-  }, []);
+  }, [loadNarratives]);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm("[ SYSTEM NOTICE ]: Permenantly delete this narrative scenario?")) {
+    if (confirm("[ SYSTEM NOTICE ]: Permanently delete this narrative scenario?")) {
       await deleteNarrative(id);
       loadNarratives();
     }
   };
 
-  const handleUploadComplete = () => {
-    loadNarratives();
-    onNarrativeAdded();
-  };
 
   const getTypeIcon = (type: string) => {
     switch (type) {
@@ -64,7 +61,7 @@ export function ArchiveGrid({ onNarrativeSelect, onNarrativeAdded }: ArchiveGrid
         <p className="text-dust text-sm font-ui">Your collected narratives and scenarios</p>
       </div>
 
-      <FileUploader onUploadComplete={handleUploadComplete} />
+      <FileUploader onUploadComplete={loadNarratives} />
 
       {isLoading ? (
         <div className="text-center py-12">
@@ -78,16 +75,24 @@ export function ArchiveGrid({ onNarrativeSelect, onNarrativeAdded }: ArchiveGrid
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {narratives.map((narrative) => {
-            // DEFENSIVE MATH: Ensure totalWords is never 0 or undefined
             const safeTotal = narrative.totalWords || 0;
-            const safeProgressIdx = narrative.progressIndex || 0;
-            const progress = safeTotal > 0 ? (safeProgressIdx / safeTotal) * 100 : 0;
-            
+            const progress = getOverallProgress(narrative);
+            const chapterCount = narrative.chapterCount ?? 0;
+
             return (
               <div
                 key={narrative.id}
-                onClick={() => onNarrativeSelect(narrative)}
-                className="group literary-panel rounded-none p-4 cursor-pointer hover:literary-panel-active transition-all duration-200 flex flex-col min-h-[180px]"
+                role="button"
+                tabIndex={0}
+                aria-disabled={isOpening}
+                onClick={() => !isOpening && onNarrativeSelect(narrative)}
+                onKeyDown={(e) => {
+                  if (!isOpening && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onNarrativeSelect(narrative);
+                  }
+                }}
+                className={`group literary-panel rounded-none p-4 cursor-pointer hover:literary-panel-active focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary transition-all duration-200 flex flex-col min-h-[180px] ${isOpening ? 'cursor-wait opacity-60' : ''}`}
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-ui uppercase tracking-wider border rounded-none bg-olive/20 text-olive border-olive/30">
@@ -97,20 +102,27 @@ export function ArchiveGrid({ onNarrativeSelect, onNarrativeAdded }: ArchiveGrid
                   
                   <button
                     onClick={(e) => handleDelete(e, narrative.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-destructive/20 transition-all rounded-none"
+                    onKeyDown={(e) => e.stopPropagation()}
+                    aria-label={`Delete ${narrative.title}`}
+                    className="md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-destructive/20 transition-all rounded-none"
                   >
                     <Trash2 className="w-3 h-3 text-dust hover:text-destructive" />
                   </button>
                 </div>
 
-                <h3 className="ui-label text-primary text-sm line-clamp-2 flex-1 mb-3">
+                <h3 className="ui-label text-primary text-sm line-clamp-2 mb-1">
                   {narrative.title}
                 </h3>
+                <p className="text-[10px] font-ui text-dust uppercase truncate flex-1 mb-3">
+                  {narrative.author && narrative.author !== 'Unknown Author' ? narrative.author : '\u00a0'}
+                </p>
 
                 <div className="space-y-2 mt-auto">
                   <div className="flex items-center justify-between text-[10px] font-ui text-dust">
-                    {/* DEFENSIVE STRING: Fallback to 0 if totalWords is missing */}
-                    <span>{(safeTotal).toLocaleString()} WORDS</span>
+                    <span>
+                      {safeTotal.toLocaleString()} WORDS
+                      {chapterCount > 1 && ` · ${chapterCount} CH`}
+                    </span>
                     <span>{formatDate(narrative.dateAdded)}</span>
                   </div>
                   

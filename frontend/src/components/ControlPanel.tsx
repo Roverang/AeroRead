@@ -130,9 +130,10 @@ export function ControlPanel({
       </div>
       
       {/* KEYBOARD SHORTCUTS */}
-      <div className="flex justify-center gap-8 text-[9px] text-dust/40 font-ui uppercase tracking-widest border-t border-primary/5 pt-4">
+      <div className="hidden md:flex justify-center gap-8 text-[9px] text-dust/40 font-ui uppercase tracking-widest border-t border-primary/5 pt-4">
         <span>Space: Toggle</span>
-        <span>Left: Rewind</span>
+        <span>← →: Skip 10</span>
+        <span>↑ ↓: Speed</span>
         <span>Esc: Exit</span>
       </div>
     </div>

@@ -127,8 +127,9 @@ export function useWarmupMode({
   useEffect(() => {
     if (!isWarmupActive) {
       targetWpmRef.current = baseWpm;
+      onWpmChange(baseWpm);
     }
-  }, [baseWpm, isWarmupActive]);
+  }, [baseWpm, isWarmupActive, onWpmChange]);
 
   return {
     isWarmupActive,

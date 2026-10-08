@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface ReadingSession {
   id: string;
@@ -16,6 +16,8 @@ const MAX_SESSIONS = 5;
 export function useReadingHistory() {
   const [sessions, setSessions] = useState<ReadingSession[]>([]);
   const [currentSession, setCurrentSession] = useState<ReadingSession | null>(null);
+  // Mirrors currentSession so endSession can stay stable across progress updates
+  const sessionRef = useRef<ReadingSession | null>(null);
 
   // Load history from localStorage on mount
   useEffect(() => {
@@ -48,35 +50,42 @@ export function useReadingHistory() {
       startTime: Date.now(),
       progress: 0,
     };
+    sessionRef.current = session;
     setCurrentSession(session);
     return session.id;
   }, []);
 
   // Update current session progress
   const updateProgress = useCallback((progress: number, wpm: number) => {
-    setCurrentSession(prev => {
-      if (!prev) return null;
-      return { ...prev, progress, wpm };
-    });
+    if (!sessionRef.current) return;
+    sessionRef.current = { ...sessionRef.current, progress, wpm };
+    setCurrentSession(sessionRef.current);
   }, []);
 
-  // End the current session and save to history
+  // End the current session and save to history.
+  // Writes storage directly: this runs during unmount, when state
+  // updaters would never execute.
   const endSession = useCallback(() => {
-    if (!currentSession) return;
-    
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    setCurrentSession(null);
+    if (!session || session.progress <= 0) return;
+
     const completedSession: ReadingSession = {
-      ...currentSession,
+      ...session,
       endTime: Date.now(),
     };
-    
-    setSessions(prev => {
-      const newSessions = [completedSession, ...prev].slice(0, MAX_SESSIONS);
-      saveToStorage(newSessions);
-      return newSessions;
-    });
-    
-    setCurrentSession(null);
-  }, [currentSession, saveToStorage]);
+
+    let stored: ReadingSession[] = [];
+    try {
+      stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    } catch {
+      stored = [];
+    }
+    const newSessions = [completedSession, ...stored].slice(0, MAX_SESSIONS);
+    saveToStorage(newSessions);
+    setSessions(newSessions);
+  }, [saveToStorage]);
 
   // Clear all history
   const clearHistory = useCallback(() => {

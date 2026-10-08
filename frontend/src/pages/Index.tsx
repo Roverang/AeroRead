@@ -7,7 +7,7 @@ import { FourthWallIntro } from '@/components/FourthWallIntro';
 import { ArchiveGrid } from '@/components/ArchiveGrid';
 import { SonicModule } from '@/components/SonicModule';
 import { processText, ProcessedWord } from '@/lib/textProcessor';
-import { Narrative, getChapter, updateProgress } from '@/services/archiveService';
+import { Narrative, getChapter, updateProgress, isLocalNarrative } from '@/services/archiveService';
 import { useStealthMode } from '@/hooks/useStealthMode';
 import { toast } from 'sonner';
 
@@ -21,6 +21,7 @@ const Index = () => {
   const [currentNarrativeId, setCurrentNarrativeId] = useState<string | null>(null);
   const [startIndex, setStartIndex] = useState(0);
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+  const [totalChapters, setTotalChapters] = useState(1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -41,35 +42,43 @@ const Index = () => {
       setStartIndex(0);
       setCurrentNarrativeId(null);
       setCurrentChapterIndex(0);
+      setTotalChapters(1);
       setViewMode('reader');
     }
   };
 
   /**
    * SYNCHRONIZATION: Load Narrative from Archive
-   * Pulls the saved state from IndexedDB and the word-stream from MongoDB.
+   * Local (TXT) narratives come straight from IndexedDB; cloud narratives
+   * pull their saved chapter's word-stream from MongoDB.
    */
   const handleNarrativeSelect = async (narrative: Narrative) => {
+    if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const chapterIdx = narrative.chapterIndex || 0;
-      
-      // 1. Synchronize with Backend Shredder
-      const data = await getChapter(narrative.id, chapterIdx);
-      
-      if (data && data.content) {
-        // 2. Feed to Cognitive Engine
-        const processedWords = processText(data.content.join(' '));
-        
-        setWords(processedWords);
-        setRawText(narrative.title);
-        setStartIndex(narrative.progressIndex);
-        setCurrentNarrativeId(narrative.id);
-        setCurrentChapterIndex(chapterIdx);
-        setViewMode('reader');
-        
-        toast.success(`[ SYNC COMPLETE ]: ${narrative.title.toUpperCase()}`);
+      let text: string;
+      let chapterIdx = narrative.chapterIndex || 0;
+      let chapterCount = 1;
+
+      if (isLocalNarrative(narrative)) {
+        text = narrative.content;
+        chapterIdx = 0;
+      } else {
+        const data = await getChapter(narrative.id, chapterIdx);
+        text = data.text;
+        chapterCount = data.total_chapters;
       }
+
+      const processedWords = processText(text);
+      if (processedWords.length === 0) throw new Error('Empty narrative');
+
+      setWords(processedWords);
+      setRawText(narrative.title);
+      setStartIndex(Math.min(narrative.progressIndex || 0, processedWords.length - 1));
+      setCurrentNarrativeId(narrative.id);
+      setCurrentChapterIndex(chapterIdx);
+      setTotalChapters(chapterCount);
+      setViewMode('reader');
     } catch (error) {
       console.error("[ SYSTEM ERROR ]: Synchronization failed.", error);
       toast.error("FAIL: Could not load archive stream.");
@@ -86,9 +95,6 @@ const Index = () => {
     setViewMode('archive');
   }, [currentNarrativeId]);
 
-  const handlePlayStateChange = (playing: boolean) => {
-    setIsPlaying(playing);
-  };
 
   const handleViewSwitch = (view: 'archive' | 'input') => {
     setViewMode(view);
@@ -109,7 +115,7 @@ const Index = () => {
       {/* 2. DYNAMIC CONTENT LAYER */}
       {viewMode === 'reader' ? (
         <ReaderView
-          storyId={currentNarrativeId || "temp-session"}
+          storyId={currentNarrativeId}
           initialWords={words}
           wpm={wpm}
           onWpmChange={setWpm}
@@ -117,7 +123,9 @@ const Index = () => {
           rawText={rawText}
           initialIndex={startIndex}
           initialChapterIndex={currentChapterIndex}
-          onPlayStateChange={handlePlayStateChange}
+          totalChapters={totalChapters}
+          isStealthActive={isStealthActive}
+          onPlayStateChange={setIsPlaying}
         />
       ) : (
         <>
@@ -130,7 +138,7 @@ const Index = () => {
             {viewMode === 'archive' ? (
               <ArchiveGrid 
                 onNarrativeSelect={handleNarrativeSelect}
-                onNarrativeAdded={() => {}}
+                isOpening={isSyncing}
               />
             ) : (
               <div className="container mx-auto px-4 py-8 max-w-4xl">
